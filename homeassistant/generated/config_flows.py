@@ -372,6 +372,7 @@ FLOWS = {
         "moehlenhoff_alpha2",
         "monarch_money",
         "monoprice",
+        "monoprice_htp1",
         "monzo",
         "moon",
         "mopeka",
