@@ -3826,6 +3826,12 @@
       "config_flow": true,
       "iot_class": "local_polling"
     },
+    "monoprice_htp1": {
+      "name": "Monoprice HTP-1",
+      "integration_type": "hub",
+      "config_flow": true,
+      "iot_class": "local_push"
+    },
     "monzo": {
       "name": "Monzo",
       "integration_type": "hub",

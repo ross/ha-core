@@ -931,6 +931,8 @@ build.json @home-assistant/supervisor
 /tests/components/monarch_money/ @jeeftor
 /homeassistant/components/monoprice/ @etsinko @OnFreund
 /tests/components/monoprice/ @etsinko @OnFreund
+/homeassistant/components/monoprice_htp1/ @ross
+/tests/components/monoprice_htp1/ @ross
 /homeassistant/components/monzo/ @jakemartin-icl
 /tests/components/monzo/ @jakemartin-icl
 /homeassistant/components/moon/ @fabaff @frenck
