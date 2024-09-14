@@ -14,44 +14,53 @@ from homeassistant.components.media_player import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 _LOGGER = logging.getLogger(__name__)
+
+_LOGGER.debug = _LOGGER.info
 
 
 def _dumps(data, *args, **kwargs):
     return dumps(data, *args, separators=(",", ":"), **kwargs)
 
 
+class CannotConnect(HomeAssistantError):
+    """Error to indicate we cannot connect."""
+
+
 class Htp1:
     def __init__(self, hostname):
-        _LOGGER.info("__init__: hostname=%s", hostname)
+        _LOGGER.debug("__init__: hostname=%s", hostname)
         self.hostname = hostname
 
         self._subscriptions = {}
 
-        self._ws = None
+        # current state and queued up changes
         self._state = None
         self._tx = None
 
-        self._task = None
+        # connection bits
+        self._client = None
+        self._ws = None
 
+        # our main background task
+        self._task = None
+        # a flag things can wait on/check to see if we're ready, meaning that
+        # we've received the initial state (mso)
         self.ready = asyncio.Event()
 
-    async def _connect(self):
-        _LOGGER.info("_connect:")
-        client = aiohttp.ClientSession(f"ws://{self.hostname}")
-        return await client.ws_connect("/ws/controller")
-
-    async def test_connection(self):
+    async def connect(self):
+        if self._client is not None:
+            return
+        _LOGGER.debug("connect:")
         try:
-            ws = await self._connect()
-            await ws.close()
-        except Exception:
-            _LOGGER.exception("Failed to connect")
-            return False
-        else:
-            return True
+            self._client = aiohttp.ClientSession(f"ws://{self.hostname}")
+            self._ws = await self._client.ws_connect("/ws/controller")
+        except (aiodns.error.DNSError, aiohttp.client_exceptions.ClientError) as e:
+            self._client = self._ws = None
+            raise CannotConnect()
 
     def start(self):
         _LOGGER.debug("start:")
@@ -59,15 +68,20 @@ class Htp1:
 
     async def _run(self):
         _LOGGER.debug("_run: connecting")
-        ws = await self._connect()
-        self._ws = ws
+
+        await self.connect()
+        ws = self._ws
 
         _LOGGER.debug("_run:   requesting initial state")
         await ws.send_str("getmso")
 
         _LOGGER.debug("_run:   entering loop")
         while not ws.closed:
-            msg = await ws.receive_str()
+            try:
+                msg = await ws.receive_str()
+            except TypeError:
+                # wasn't a TXT message, we're not interested
+                continue
             _LOGGER.debug("_run:   received msg[:32]=%s***", msg[:32])
             # split off the command from the payload
             cmd, payload = msg.split(" ", 1)
@@ -85,11 +99,18 @@ class Htp1:
     async def stop(self):
         _LOGGER.debug("stop:")
         if self._ws is not None:
+            _LOGGER.debug("stop:   closing websocket")
             await self._ws.close()
             self._ws = None
+        if self._client is not None:
+            _LOGGER.debug("stop:   closing client")
+            await self._client.close()
+            self._client = None
         if self._task is not None:
+            _LOGGER.debug("stop:   waiting for task")
             await self._task
             self._task = None
+        _LOGGER.debug("stop:   complete")
 
     ## Subscriptions
 
@@ -166,6 +187,10 @@ class Htp1:
         return True
 
     ## Operations
+
+    @property
+    def serial_number(self):
+        return str(self._state["versions"]["SerialNumber"])
 
     @property
     def cal_vph(self):
@@ -304,7 +329,7 @@ class Htp1MediaPlayer(MediaPlayerEntity):
 
     async def _updated(self, *args, **kwargs):
         # https://developers.home-assistant.io/docs/integration_fetching_data/
-        _LOGGER.info("_updated")
+        _LOGGER.debug("_updated")
         self.async_write_ha_state()
 
     @property
@@ -323,7 +348,7 @@ class Htp1MediaPlayer(MediaPlayerEntity):
     @property
     def unique_id(self) -> str:
         """Return the unique ID for this media_player."""
-        return f"{self.htp1.hostname}"
+        return self.htp1.serial_number
 
     ## Power
 
@@ -438,7 +463,18 @@ async def async_setup_entry(
     hostname = config_entry.data[CONF_HOST]
     name = config_entry.data.get(CONF_NAME, config_entry.data[CONF_HOST])
 
+    # TODO: follow the coodinator <-> entity pattern
+    # https://developers.home-assistant.io/docs/integration_fetching_data
+
     htp1 = Htp1(hostname=hostname)
+    try:
+        htp1.connect()
+    except CannotConnect as e:
+        raise ConfigEntryNotReady(f"failed to connect to {hostname}") from e
+    htp1.start()
+    await htp1.ready.wait()
+
+
     media_player = Htp1MediaPlayer(htp1=htp1)
     _LOGGER.debug(
         "async_setup_entry: media player created host=%s, name=%s", hostname, name

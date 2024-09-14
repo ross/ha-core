@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import aiodns
+import aiohttp
 import logging
 from typing import Any
 
@@ -10,10 +12,9 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow as _ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST, CONF_NAME
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .media_player import Htp1
+from .media_player import CannotConnect, Htp1
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -25,23 +26,20 @@ STEP_USER_DATA_SCHEMA = vol.Schema(
 )
 
 
-class CannotConnect(HomeAssistantError):
-    """Error to indicate we cannot connect."""
-
-
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
     """Validate the user input allows us to connect.
 
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
 
-    htp1 = Htp1(hostname=data[CONF_HOST])
-
-    if not await htp1.test_connection():
-        raise CannotConnect
+    hostname = data[CONF_HOST]
+    htp1 = Htp1(hostname=hostname)
+    status = await htp1.connect()
+    await htp1.stop()
 
     # Return info that you want to store in the config entry.
     name = data.get(CONF_NAME, data[CONF_HOST])
+
     return {
         "title": name,
     }
@@ -71,3 +69,7 @@ class ConfigFlow(_ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="user", data_schema=STEP_USER_DATA_SCHEMA, errors=errors
         )
+
+
+    # allow reconfigure, using the same stuff as initial
+    async_step_reconfigure = async_step_user
