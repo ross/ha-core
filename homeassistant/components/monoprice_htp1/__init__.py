@@ -5,10 +5,10 @@ from datetime import timedelta
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .aiohtp1 import Htp1
 from .const import DOMAIN
+from .helpers import async_get_clientsession
 
 PLATFORMS: list[Platform] = [Platform.MEDIA_PLAYER]
 SCAN_INTERVAL = timedelta(seconds=30)

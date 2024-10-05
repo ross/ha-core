@@ -8,10 +8,10 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow as _ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .aiohtp1 import AioHtp1Exception, ConnectionException, Htp1
 from .const import DOMAIN, LOGGER
+from .helpers import async_get_clientsession
 
 
 async def validate_input(hass: HomeAssistant, data: dict) -> str:

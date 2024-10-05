@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from json import dumps, loads
 from logging import getLogger
 from typing import Any
@@ -21,13 +22,18 @@ class ConnectionException(AioHtp1Exception):
 class Htp1:
     """Connect to and manage a Monoprice HTP-1."""
 
+    RECONNECT_DELAY_INITIAL = 5
+    RECONNECT_DELAY_MAX = 300
+    MSO_WAIT_TIMEOUT = 5
+
+    log = getLogger("aiohtp1")
+
     def __init__(
         self,
         host: str,
         session: aiohttp.ClientSession,
     ) -> None:
         """Initialize."""
-        self.log = getLogger(f"Htp1[{host}]")
 
         self.host: str = host
         self.session: aiohttp.ClientSession = session
@@ -55,8 +61,8 @@ class Htp1:
 
     @property
     def connected(self):
-        """Returns True if the Htp1 device is connected."""
-        return self._websocket is not None and not self._websocket.closed
+        """Returns True if the Htp1 device is connected and data is ready."""
+        return self._state_ready.is_set()
 
     async def connect(self):
         """Connect to the HTP-1 device and open the control websocket."""
@@ -64,23 +70,48 @@ class Htp1:
 
         url = f"ws://{self.host}/ws/controller"
         self.log.debug("connect: url=%s", url)
+
         try:
-            # TODO: need to adjust timeouts?
             self._websocket = await self.session.ws_connect(url)
-        except (aiodns.error.DNSError, aiohttp.client_exceptions.ClientError) as err:
+
+            # we have a connection, start our receiving handler
+            self._recveive_task = asyncio.create_task(self._recveive())
+
+            # request the initial state
+            self.log.debug("connect:   requesting mso")
+            await self._websocket.send_str("getmso")
+
+            # wait until we receive the initial state
+            async with asyncio.timeout(self.MSO_WAIT_TIMEOUT):
+                await self._state_ready.wait()
+        except (
+            TimeoutError,
+            aiodns.error.DNSError,
+            aiohttp.client_exceptions.ClientError,
+            asyncio.CancelledError,
+        ) as err:
+            self.log.warning("connect: failed to connect and retrieve mso")
+            await self._disconnect()
             raise ConnectionException from err
 
-        # start our receiving handler
-        self._recveive_task = asyncio.create_task(self._recveive())
-
-        # request the initial state
-        self.log.debug("connect:   requesting mso")
-        await self._websocket.send_str("getmso")
-
-        # wait until we receive the initial state
-        await self._state_ready.wait()
         self.log.debug("connect:   received mso, ready")
-        await self._notify("#connection")
+        self._notify("#connection")
+
+    async def _disconnect(self):
+        self.log.debug("_disconnect:")
+        if self._websocket is not None:
+            # if we have an open connection, close it, this should exit and
+            # clean up the _recveive_task as well
+            await self._websocket.close()
+        if self._recveive_task is not None:
+            # if our receiving handler is running, stop it
+            self._recveive_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._recveive_task
+            self._recveive_task = None
+        # websocket is no longer valid
+        self._websocket = None
+        self.log.debug("_disconnect: done")
 
     async def try_connect(self):
         """Start the process of persistently trying to connect to the HTP-1 device."""
@@ -89,23 +120,30 @@ class Htp1:
     async def _try_connect(self):
         self.log.debug("_try_connect:")
         self._trying_to_connect = True
-        sleep_time = 5
+        sleep_time = self.RECONNECT_DELAY_INITIAL
         try:
             while self._trying_to_connect:
                 try:
                     await self.connect()
                 except ConnectionException:
                     self.log.debug("_try_connect:   failed")
-                    # TODO: interruptible?
                     await asyncio.sleep(sleep_time)
                     sleep_time *= 2
-                    sleep_time = min(sleep_time, 300)
+                    sleep_time = min(sleep_time, self.RECONNECT_DELAY_MAX)
                 else:
                     self.log.debug("_try_connect:   connected")
                     return
         finally:
             self._try_connect_task = None
             self.log.debug("_try_connect:   exited loop")
+
+    async def _stop_connect(self):
+        self.log.debug("_stop_connect:")
+        self._trying_to_connect = False
+        self._try_connect_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await self._try_connect_task
+        self.log.debug("_stop_connect: done")
 
     async def _recveive(self):
         self.log.debug("_recveive:")
@@ -132,21 +170,15 @@ class Htp1:
                         # don't exit if a handler has a problem, just log it
                         self.log.exception("_recveive: handler=%s, threw an exception")
         finally:
-            self._recveive_task = None
+            # self._recveive_task = None
             self.log.debug("_recveive:   exited loop")
 
     async def stop(self):
         """Disconnect from the HTP-1 device and shut down any running background tasks."""
         self.log.debug("stop:")
-        # make sure we stop trying to connect if we are
-        self._trying_to_connect = False
-        if self._try_connect_task is not None:
-            await self._try_connect_task
-        if self._websocket is not None:
-            await self._websocket.close()
-            self._websocket = None
-        if self._recveive_task is not None:
-            await self._recveive_task
+        self._stop_connect()
+        self._disconnect()
+        self.reset()
 
     ## Handlers
 
