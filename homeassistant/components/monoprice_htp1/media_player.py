@@ -51,7 +51,10 @@ class Htp1MediaPlayer(MediaPlayerEntity):
     async def _updated(self, *args, **kwargs) -> None:
         # https://developers.home-assistant.io/docs/integration_fetching_data/
         LOGGER.debug("_updated")
-        self._attr_available = self.htp1.connected
+        htp1 = self.htp1
+        self._attr_available = htp1.connected
+        # set the volume step so that it'll be equivalent to 1db
+        self._attr_volume_step = 1 / (htp1.cal_vph - htp1.cal_vpl)
         # self.async_write_ha_state()
         self.async_schedule_update_ha_state()
 
@@ -107,20 +110,6 @@ class Htp1MediaPlayer(MediaPlayerEntity):
         volume = volume * (self.htp1.cal_vph - self.htp1.cal_vpl) + self.htp1.cal_vpl
         async with self.htp1 as tx:
             tx.volume = volume
-            await tx.commit()
-
-    async def async_volume_up(self) -> None:
-        """Turn volume up for media player."""
-        async with self.htp1 as tx:
-            # TODO: what if we get this again before changemso
-            tx.volume = tx.volume + 1
-            await tx.commit()
-
-    async def async_volume_down(self) -> None:
-        """Turn volume down for media player."""
-        async with self.htp1 as tx:
-            # TODO: what if we get this again before changemso
-            tx.volume = tx.volume - 1
             await tx.commit()
 
     ## Mute
