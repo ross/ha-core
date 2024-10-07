@@ -363,9 +363,9 @@ class Htp1:
         """List the HTP-1 device's visible inputs."""
         if not self._state:
             return []
-        return sorted(
+        return [
             i["label"] for i in self._state["inputs"].values() if i["visible"]
-        )
+        ]
 
     @property
     def upmix(self):
@@ -388,6 +388,6 @@ class Htp1:
         """List the HTP-1 device's visible upmixes."""
         if not self._state:
             return []
-        return sorted(
+        return [
             k for k, i in self._state["upmix"].items() if k != "select" and i["homevis"]
-        )
+        ]
