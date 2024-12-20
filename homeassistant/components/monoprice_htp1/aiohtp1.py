@@ -95,7 +95,7 @@ class Htp1:
             raise ConnectionException from err
 
         self.log.debug("connect:   received mso, ready")
-        self._notify("#connection")
+        await self._notify("#connection")
 
     async def _disconnect(self):
         self.log.debug("_disconnect:")
