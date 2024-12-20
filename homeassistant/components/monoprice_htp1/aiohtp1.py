@@ -194,10 +194,6 @@ class Htp1:
         for piece in payload:
             op = piece["op"]
             path = piece["path"][1:].split("/")
-            value = piece["value"]
-            self.log.debug(
-                "_cmd_msoupdate:   op=%s, path=%s, value=%s", op, path, value
-            )
             d = self._state
             last = path.pop()
             if op in ("add", "replace"):
@@ -209,6 +205,11 @@ class Htp1:
                     d = d[node]
             else:
                 raise NotImplementedError
+
+            value = piece["value"]
+            self.log.debug(
+                "_cmd_msoupdate:   op=%s, path=%s, value=%s", op, path, value
+            )
 
             # make the change
             d[last] = value
